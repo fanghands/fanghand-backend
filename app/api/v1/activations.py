@@ -109,9 +109,9 @@ async def list_activations(
     items = rows[:limit]
 
     return CursorPage(
-        items=[_to_response(a) for a in items],
+        data=[_to_response(a) for a in items],
         next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
+        total=len(items),
     )
 
 
@@ -376,7 +376,7 @@ async def get_activation_logs(
     items = rows[:limit]
 
     return CursorPage(
-        items=[
+        data=[
             RunResponse(
                 id=r.id,
                 hand_name=r.hand.name if r.hand else "Unknown",
@@ -394,5 +394,5 @@ async def get_activation_logs(
             for r in items
         ],
         next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
+        total=len(items),
     )

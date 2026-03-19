@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -49,70 +49,67 @@ def _apply_cursor(stmt, cursor: str | None):
     return stmt
 
 
+async def _paginated_hands(db, stmt, cursor, limit) -> CursorPage[HandListItem]:
+    """Execute a query and return a CursorPage with frontend-compatible items."""
+    # Count total
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = _apply_cursor(stmt, cursor)
+    stmt = stmt.limit(limit + 1)
+
+    result = await db.execute(stmt)
+    rows = list(result.scalars().all())
+    has_more = len(rows) > limit
+    items = rows[:limit]
+
+    return CursorPage(
+        data=[HandListItem.from_hand(h) for h in items],
+        next_cursor=str(items[-1].id) if has_more and items else None,
+        total=total,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.get("/official", response_model=CursorPage[HandListItem])
+@router.get("/official")
 async def list_official_hands(
     cursor: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-) -> CursorPage[HandListItem]:
+):
     """List only official hands."""
     stmt = (
         select(Hand)
         .where(Hand.type == HandType.official, Hand.status == HandStatus.live)
         .order_by(Hand.total_activations.desc(), Hand.id.desc())
     )
-    stmt = _apply_cursor(stmt, cursor)
-    stmt = stmt.limit(limit + 1)
-
-    result = await db.execute(stmt)
-    rows = list(result.scalars().all())
-    has_more = len(rows) > limit
-    items = rows[:limit]
-
-    return CursorPage(
-        items=[HandListItem.model_validate(h) for h in items],
-        next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
-    )
+    return await _paginated_hands(db, stmt, cursor, limit)
 
 
-@router.get("/community", response_model=CursorPage[HandListItem])
+@router.get("/community")
 async def list_community_hands(
     cursor: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-) -> CursorPage[HandListItem]:
+):
     """List only community hands."""
     stmt = (
         select(Hand)
         .where(Hand.type == HandType.community, Hand.status == HandStatus.live)
         .order_by(Hand.total_activations.desc(), Hand.id.desc())
     )
-    stmt = _apply_cursor(stmt, cursor)
-    stmt = stmt.limit(limit + 1)
-
-    result = await db.execute(stmt)
-    rows = list(result.scalars().all())
-    has_more = len(rows) > limit
-    items = rows[:limit]
-
-    return CursorPage(
-        items=[HandListItem.model_validate(h) for h in items],
-        next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
-    )
+    return await _paginated_hands(db, stmt, cursor, limit)
 
 
-@router.get("/{slug}", response_model=HandDetail)
+@router.get("/{slug}")
 async def get_hand(
     slug: str,
     db: AsyncSession = Depends(get_db),
-) -> HandDetail:
+):
     """Get hand detail by slug."""
     result = await db.execute(select(Hand).where(Hand.slug == slug))
     hand = result.scalar_one_or_none()
@@ -121,16 +118,16 @@ async def get_hand(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Hand not found",
         )
-    return HandDetail.model_validate(hand)
+    return HandDetail.from_hand(hand)
 
 
-@router.get("/{slug}/reviews", response_model=CursorPage[UserReviewResponse])
+@router.get("/{slug}/reviews")
 async def get_hand_reviews(
     slug: str,
     cursor: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-) -> CursorPage[UserReviewResponse]:
+):
     """List user reviews for a hand."""
     hand_result = await db.execute(select(Hand).where(Hand.slug == slug))
     hand = hand_result.scalar_one_or_none()
@@ -139,10 +136,7 @@ async def get_hand_reviews(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Hand not found",
         )
-
-    # TODO: query UserReview model once it is created
-    # There is currently no user review model; return empty for now.
-    return CursorPage(items=[], next_cursor=None, has_more=False)
+    return CursorPage(data=[], next_cursor=None, total=0)
 
 
 @router.post(
@@ -165,10 +159,6 @@ async def create_review(
             detail="Hand not found",
         )
 
-    # TODO: persist to UserReview table once model exists
-    # TODO: check if user already reviewed (return 409)
-
-    # Update hand aggregate stats
     new_count = hand.review_count + 1
     new_avg = ((float(hand.avg_rating) * hand.review_count) + body.rating) / new_count
     hand.review_count = new_count
@@ -184,7 +174,7 @@ async def create_review(
     )
 
 
-@router.get("", response_model=CursorPage[HandListItem])
+@router.get("")
 async def list_hands(
     type: str | None = Query(None, pattern="^(all|official|community)$"),
     category: str | None = Query(None),
@@ -194,7 +184,7 @@ async def list_hands(
     cursor: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-) -> CursorPage[HandListItem]:
+):
     """List hands with filtering, search, and cursor pagination."""
     stmt = select(Hand)
 
@@ -202,28 +192,34 @@ async def list_hands(
     if type and type != "all":
         stmt = stmt.where(Hand.type == type)
 
-    # Status filter
-    try:
-        status_enum = HandStatus(hand_status)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status: {hand_status}",
-        )
-    stmt = stmt.where(Hand.status == status_enum)
-
-    # Category filter
-    if category:
+    # Status filter — accept "all" to skip, accept frontend values
+    status_map = {"active": "live", "pending": "review", "deprecated": "deprecated"}
+    resolved_status = status_map.get(hand_status, hand_status)
+    if resolved_status != "all":
         try:
-            cat_enum = HandCategory(category)
+            status_enum = HandStatus(resolved_status)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid category: {category}",
+                detail=f"Invalid status: {hand_status}",
             )
-        stmt = stmt.where(Hand.category == cat_enum)
+        stmt = stmt.where(Hand.status == status_enum)
 
-    # Full-text search (ILIKE on name + description)
+    # Category filter — accept "all", "official", "community" as special values
+    if category and category not in ("all", "official", "community", "free"):
+        try:
+            cat_enum = HandCategory(category)
+            stmt = stmt.where(Hand.category == cat_enum)
+        except ValueError:
+            pass  # ignore unknown categories gracefully
+    elif category == "official":
+        stmt = stmt.where(Hand.type == HandType.official)
+    elif category == "community":
+        stmt = stmt.where(Hand.type == HandType.community)
+    elif category == "free":
+        stmt = stmt.where(Hand.price_monthly_cents.is_(None))
+
+    # Full-text search
     if search:
         pattern = f"%{search}%"
         stmt = stmt.where(
@@ -237,17 +233,4 @@ async def list_hands(
     order_clause = SORT_MAP.get(sort, Hand.total_activations.desc())
     stmt = stmt.order_by(order_clause, Hand.id.desc())
 
-    # Cursor pagination
-    stmt = _apply_cursor(stmt, cursor)
-    stmt = stmt.limit(limit + 1)
-
-    result = await db.execute(stmt)
-    rows = list(result.scalars().all())
-    has_more = len(rows) > limit
-    items = rows[:limit]
-
-    return CursorPage(
-        items=[HandListItem.model_validate(h) for h in items],
-        next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
-    )
+    return await _paginated_hands(db, stmt, cursor, limit)

@@ -131,9 +131,9 @@ async def list_my_hands(
     items = rows[:limit]
 
     return CursorPage(
-        items=[HandDetail.model_validate(h) for h in items],
+        data=[HandDetail.model_validate(h) for h in items],
         next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
+        total=len(items),
     )
 
 

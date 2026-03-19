@@ -184,7 +184,7 @@ async def payment_history(
     items = rows[:limit]
 
     return CursorPage(
-        items=[
+        data=[
             PaymentHistoryItem(
                 id=p.id,
                 type=p.type.value,
@@ -198,7 +198,7 @@ async def payment_history(
             for p in items
         ],
         next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
+        total=len(items),
     )
 
 
@@ -229,7 +229,7 @@ async def list_burns(
     items = rows[:limit]
 
     return CursorPage(
-        items=[
+        data=[
             BurnEvent(
                 id=b.id,
                 fgh_burned=b.fgh_burned,
@@ -240,7 +240,7 @@ async def list_burns(
             for b in items
         ],
         next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
+        total=len(items),
     )
 
 

@@ -16,9 +16,9 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 
 class CursorPage(BaseModel, Generic[T]):
-    items: List[T]
+    data: List[T]
     next_cursor: Optional[str] = None
-    has_more: bool = False
+    total: int = 0
 
 
 class ErrorResponse(BaseModel):

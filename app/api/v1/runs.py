@@ -96,9 +96,9 @@ async def run_history(
     items = rows[:limit]
 
     return CursorPage(
-        items=[_to_response(r) for r in items],
+        data=[_to_response(r) for r in items],
         next_cursor=str(items[-1].id) if has_more and items else None,
-        has_more=has_more,
+        total=len(items),
     )
 
 
