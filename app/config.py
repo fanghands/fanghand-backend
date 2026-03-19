@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000"]
 
-    # Database (Supabase)
+    # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/fanghand"
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
 
     model_config = {"env_file": ".env", "case_sensitive": True}
+
+    @property
+    def async_database_url(self) -> str:
+        """Convert Railway's postgres:// to postgresql+asyncpg://"""
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif not url.startswith("postgresql+asyncpg://"):
+            url = "postgresql+asyncpg://" + url.split("://", 1)[-1]
+        return url
 
 
 settings = Settings()

@@ -16,7 +16,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Override sqlalchemy.url with the actual DATABASE_URL from settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.async_database_url)
 
 target_metadata = Base.metadata
 
